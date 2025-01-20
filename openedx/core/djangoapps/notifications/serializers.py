@@ -1,6 +1,7 @@
 """
 Serializers for the notifications API.
 """
+
 from django.core.exceptions import ValidationError
 from rest_framework import serializers
 
@@ -9,10 +10,13 @@ from openedx.core.djangoapps.content.course_overviews.models import CourseOvervi
 from openedx.core.djangoapps.notifications.models import (
     CourseNotificationPreference,
     Notification,
-    get_notification_channels, get_additional_notification_channel_settings
+    get_additional_notification_channel_settings,
+    get_notification_channels
 )
+
 from .base_notification import COURSE_NOTIFICATION_APPS, COURSE_NOTIFICATION_TYPES, EmailCadence
-from .utils import filter_course_wide_preferences, remove_preferences_with_no_access
+from .email.utils import is_notification_type_channel_editable
+from .utils import remove_preferences_with_no_access
 
 
 def add_info_to_notification_config(config_obj):
@@ -73,7 +77,6 @@ class UserCourseNotificationPreferenceSerializer(serializers.ModelSerializer):
         course_id = self.context['course_id']
         user = self.context['user']
         preferences = add_info_to_notification_config(preferences)
-        preferences = filter_course_wide_preferences(course_id, preferences)
         preferences = remove_preferences_with_no_access(preferences, user)
         return preferences
 
@@ -185,60 +188,6 @@ class UserNotificationPreferenceUpdateSerializer(serializers.Serializer):
         return instance
 
 
-class UserNotificationChannelPreferenceUpdateSerializer(serializers.Serializer):
-    """
-    Serializer for user notification preferences update for an entire channel.
-    """
-
-    notification_app = serializers.CharField()
-    value = serializers.BooleanField()
-    notification_channel = serializers.CharField(required=False)
-
-    def validate(self, attrs):
-        """
-        Validation for notification preference update form
-        """
-        notification_app = attrs.get('notification_app')
-        notification_channel = attrs.get('notification_channel')
-
-        notification_app_config = self.instance.notification_preference_config
-
-        if not notification_channel:
-            raise ValidationError(
-                'notification_channel is required for notification_type.'
-            )
-
-        if not notification_app_config.get(notification_app, None):
-            raise ValidationError(
-                f'{notification_app} is not a valid notification app.'
-            )
-
-        if notification_channel and notification_channel not in get_notification_channels():
-            raise ValidationError(
-                f'{notification_channel} is not a valid notification channel.'
-            )
-
-        return attrs
-
-    def update(self, instance, validated_data):
-        """
-        Update notification preference config.
-        """
-        notification_app = validated_data.get('notification_app')
-        notification_channel = validated_data.get('notification_channel')
-        value = validated_data.get('value')
-        user_notification_preference_config = instance.notification_preference_config
-
-        app_prefs = user_notification_preference_config[notification_app]
-        for notification_type_name, notification_type_preferences in app_prefs['notification_types'].items():
-            non_editable_channels = app_prefs['non_editable'].get(notification_type_name, [])
-            if notification_channel not in non_editable_channels:
-                app_prefs['notification_types'][notification_type_name][notification_channel] = value
-
-        instance.save()
-        return instance
-
-
 class NotificationSerializer(serializers.ModelSerializer):
     """
     Serializer for the Notification model.
@@ -253,7 +202,118 @@ class NotificationSerializer(serializers.ModelSerializer):
             'content_context',
             'content',
             'content_url',
+            'course_id',
             'last_read',
             'last_seen',
             'created',
         )
+
+
+def validate_email_cadence(email_cadence: str) -> str:
+    """
+    Validate email cadence value.
+    """
+    if EmailCadence.get_email_cadence_value(email_cadence) is None:
+        raise ValidationError(f'{email_cadence} is not a valid email cadence.')
+    return email_cadence
+
+
+def validate_notification_app(notification_app: str) -> str:
+    """
+    Validate notification app value.
+    """
+    if not COURSE_NOTIFICATION_APPS.get(notification_app):
+        raise ValidationError(f'{notification_app} is not a valid notification app.')
+    return notification_app
+
+
+def validate_notification_app_enabled(notification_app: str) -> str:
+    """
+    Validate notification app is enabled.
+    """
+
+    if COURSE_NOTIFICATION_APPS.get(notification_app) and COURSE_NOTIFICATION_APPS.get(notification_app)['enabled']:
+        return notification_app
+    raise ValidationError(f'{notification_app} is not a valid notification app.')
+
+
+def validate_notification_type(notification_type: str) -> str:
+    """
+    Validate notification type value.
+    """
+    if not COURSE_NOTIFICATION_TYPES.get(notification_type):
+        raise ValidationError(f'{notification_type} is not a valid notification type.')
+    return notification_type
+
+
+def validate_notification_channel(notification_channel: str) -> str:
+    """
+    Validate notification channel value.
+    """
+    valid_channels = set(get_notification_channels()) | set(get_additional_notification_channel_settings())
+    if notification_channel not in valid_channels:
+        raise ValidationError(f'{notification_channel} is not a valid notification channel setting.')
+    return notification_channel
+
+
+class UserNotificationPreferenceUpdateAllSerializer(serializers.Serializer):
+    """
+    Serializer for user notification preferences update with custom field validators.
+    """
+    notification_app = serializers.CharField(
+        required=True,
+        validators=[validate_notification_app, validate_notification_app_enabled]
+    )
+    value = serializers.BooleanField(required=False)
+    notification_type = serializers.CharField(
+        required=True,
+    )
+    notification_channel = serializers.CharField(
+        required=False,
+        validators=[validate_notification_channel]
+    )
+    email_cadence = serializers.CharField(
+        required=False,
+        validators=[validate_email_cadence]
+    )
+
+    def validate(self, attrs):
+        """
+        Cross-field validation for notification preference update.
+        """
+        notification_app = attrs.get('notification_app')
+        notification_type = attrs.get('notification_type')
+        notification_channel = attrs.get('notification_channel')
+        email_cadence = attrs.get('email_cadence')
+
+        # Validate email_cadence requirements
+        if email_cadence and not notification_type:
+            raise ValidationError({
+                'notification_type': 'notification_type is required for email_cadence.'
+            })
+
+        # Validate notification_channel requirements
+        if not email_cadence and notification_type and not notification_channel:
+            raise ValidationError({
+                'notification_channel': 'notification_channel is required for notification_type.'
+            })
+
+        # Validate notification type
+        if all([not COURSE_NOTIFICATION_TYPES.get(notification_type), notification_type != "core"]):
+            raise ValidationError(f'{notification_type} is not a valid notification type.')
+
+        # Validate notification type and channel is editable
+        if notification_channel and notification_type:
+            if not is_notification_type_channel_editable(
+                notification_app,
+                notification_type,
+                notification_channel
+            ):
+                raise ValidationError({
+                    'notification_channel': (
+                        f'{notification_channel} is not editable for notification type '
+                        f'{notification_type}.'
+                    )
+                })
+
+        return attrs
