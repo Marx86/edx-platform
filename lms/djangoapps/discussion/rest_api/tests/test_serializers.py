@@ -54,6 +54,12 @@ class SerializerTestMixin(ForumsEnableMixin, CommentsServiceMockMixin, UrlResetM
         httpretty.enable()
         self.addCleanup(httpretty.reset)
         self.addCleanup(httpretty.disable)
+        patcher = mock.patch(
+            'openedx.core.djangoapps.discussions.config.waffle.ENABLE_FORUM_V2.is_enabled',
+            return_value=False
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
         self.maxDiff = None  # pylint: disable=invalid-name
         self.user = UserFactory.create()
         self.register_get_user_response(self.user)
@@ -143,6 +149,7 @@ class SerializerTestMixin(ForumsEnableMixin, CommentsServiceMockMixin, UrlResetM
 @ddt.ddt
 class ThreadSerializerSerializationTest(SerializerTestMixin, SharedModuleStoreTestCase):
     """Tests for ThreadSerializer serialization."""
+
     def make_cs_content(self, overrides):
         """
         Create a thread with the given overrides, plus some useful test data.
@@ -279,6 +286,7 @@ class ThreadSerializerSerializationTest(SerializerTestMixin, SharedModuleStoreTe
         can_delete = role != FORUM_ROLE_STUDENT
         editable_fields = ["abuse_flagged", "copy_link", "following", "read", "voted"]
         if role == "author":
+            editable_fields.remove("voted")
             editable_fields.extend(['anonymous', 'raw_body', 'title', 'topic_id', 'type'])
         elif role == FORUM_ROLE_MODERATOR:
             editable_fields.extend(['close_reason_code', 'closed', 'edit_reason_code', 'pinned',
@@ -335,7 +343,9 @@ class ThreadSerializerSerializationTest(SerializerTestMixin, SharedModuleStoreTe
         editable_fields = ["abuse_flagged", "copy_link", "following", "read", "voted"]
 
         if role == "author":
+            editable_fields.remove("voted")
             editable_fields.extend(['anonymous', 'raw_body', 'title', 'topic_id', 'type'])
+
         elif role == FORUM_ROLE_MODERATOR:
             editable_fields.extend(['close_reason_code', 'closed', 'edit_reason_code', 'pinned',
                                     'raw_body', 'title', 'topic_id', 'type'])
@@ -375,6 +385,7 @@ class ThreadSerializerSerializationTest(SerializerTestMixin, SharedModuleStoreTe
 @ddt.ddt
 class CommentSerializerTest(SerializerTestMixin, SharedModuleStoreTestCase):
     """Tests for CommentSerializer."""
+
     def setUp(self):
         super().setUp()
         self.endorser = UserFactory.create()
@@ -566,6 +577,12 @@ class ThreadSerializerDeserializationTest(
         httpretty.enable()
         self.addCleanup(httpretty.reset)
         self.addCleanup(httpretty.disable)
+        patcher = mock.patch(
+            'openedx.core.djangoapps.discussions.config.waffle.ENABLE_FORUM_V2.is_enabled',
+            return_value=False
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
         self.user = UserFactory.create()
         self.register_get_user_response(self.user)
         self.request = RequestFactory().get("/dummy")
@@ -610,7 +627,7 @@ class ThreadSerializerDeserializationTest(
         self.register_post_thread_response({"id": "test_id", "username": self.user.username})
         saved = self.save_and_reserialize(self.minimal_data)
         assert urlparse(httpretty.last_request().path).path ==\
-               '/api/v1/test_topic/threads'  # lint-amnesty, pylint: disable=no-member
+            '/api/v1/test_topic/threads'  # lint-amnesty, pylint: disable=no-member
         assert parsed_body(httpretty.last_request()) == {
             'course_id': [str(self.course.id)],
             'commentable_id': ['test_topic'],
@@ -797,6 +814,22 @@ class CommentSerializerDeserializationTest(ForumsEnableMixin, CommentsServiceMoc
         httpretty.enable()
         self.addCleanup(httpretty.reset)
         self.addCleanup(httpretty.disable)
+        patcher = mock.patch(
+            'openedx.core.djangoapps.discussions.config.waffle.ENABLE_FORUM_V2.is_enabled',
+            return_value=False
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        patcher = mock.patch(
+            "openedx.core.djangoapps.django_comment_common.comment_client.models.forum_api.get_course_id_by_comment"
+        )
+        self.mock_get_course_id_by_comment = patcher.start()
+        self.addCleanup(patcher.stop)
+        patcher = mock.patch(
+            "openedx.core.djangoapps.django_comment_common.comment_client.thread.forum_api.get_course_id_by_thread"
+        )
+        self.mock_get_course_id_by_thread = patcher.start()
+        self.addCleanup(patcher.stop)
         self.user = UserFactory.create()
         self.register_get_user_response(self.user)
         self.request = RequestFactory().get("/dummy")

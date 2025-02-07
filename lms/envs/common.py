@@ -50,13 +50,18 @@ from path import Path as path
 from django.utils.translation import gettext_lazy as _
 from enterprise.constants import (
     ENTERPRISE_ADMIN_ROLE,
+    ENTERPRISE_LEARNER_ROLE,
     ENTERPRISE_CATALOG_ADMIN_ROLE,
     ENTERPRISE_DASHBOARD_ADMIN_ROLE,
     ENTERPRISE_ENROLLMENT_API_ADMIN_ROLE,
     ENTERPRISE_FULFILLMENT_OPERATOR_ROLE,
     ENTERPRISE_REPORTING_CONFIG_ADMIN_ROLE,
     ENTERPRISE_SSO_ORCHESTRATOR_OPERATOR_ROLE,
-    ENTERPRISE_OPERATOR_ROLE
+    ENTERPRISE_OPERATOR_ROLE,
+    SYSTEM_ENTERPRISE_PROVISIONING_ADMIN_ROLE,
+    PROVISIONING_ENTERPRISE_CUSTOMER_ADMIN_ROLE,
+    PROVISIONING_PENDING_ENTERPRISE_CUSTOMER_ADMIN_ROLE,
+    DEFAULT_ENTERPRISE_ENROLLMENT_INTENTIONS_ROLE,
 )
 
 from openedx.core.constants import COURSE_KEY_REGEX, COURSE_KEY_PATTERN, COURSE_ID_PATTERN
@@ -946,17 +951,6 @@ FEATURES = {
     # .. toggle_tickets: 'https://openedx.atlassian.net/browse/OSPR-5290'
     'ENABLE_BULK_USER_RETIREMENT': False,
 
-    # .. toggle_name: FEATURES['ENABLE_V2_CERT_DISPLAY_SETTINGS']
-    # .. toggle_implementation: DjangoSetting
-    # .. toggle_default: False
-    # .. toggle_description: Whether to use the reimagined certificates_display_behavior and certificate_available_date
-    # .. settings. Will eventually become the default.
-    # .. toggle_use_cases: temporary
-    # .. toggle_creation_date: 2021-07-26
-    # .. toggle_target_removal_date: 2021-10-01
-    # .. toggle_tickets: 'https://openedx.atlassian.net/browse/MICROBA-1405'
-    'ENABLE_V2_CERT_DISPLAY_SETTINGS': False,
-
     # .. toggle_name: FEATURES['ENABLE_INTEGRITY_SIGNATURE']
     # .. toggle_implementation: DjangoSetting
     # .. toggle_default: False
@@ -1065,18 +1059,6 @@ FEATURES = {
     # .. toggle_creation_date: 2024-04-24
     'ENABLE_COURSEWARE_SEARCH_VERIFIED_ENROLLMENT_REQUIRED': False,
 
-    # .. toggle_name: FEATURES['ENABLE_BLAKE2B_HASHING']
-    # .. toggle_implementation: DjangoSetting
-    # .. toggle_default: False
-    # .. toggle_description: Enables the memcache to use the blake2b hash algorithm instead of depreciated md4 for keys
-    #   exceeding 250 characters
-    # .. toggle_use_cases: open_edx
-    # .. toggle_creation_date: 2024-04-02
-    # .. toggle_target_removal_date: 2024-12-09
-    # .. toggle_warning: For consistency, keep the value in sync with the setting of the same name in the LMS and CMS.
-    # .. toggle_tickets: https://github.com/openedx/edx-platform/pull/34442
-    'ENABLE_BLAKE2B_HASHING': False,
-
     # .. toggle_name: FEATURES['BADGES_ENABLED']
     # .. toggle_implementation: DjangoSetting
     # .. toggle_default: False
@@ -1100,6 +1082,11 @@ DEFAULT_GROUPS = []
 
 # If this is true, random scores will be generated for the purpose of debugging the profile graphs
 GENERATE_PROFILE_SCORES = False
+
+# .. setting_name: GRADEBOOK_FREEZE_DAYS
+# .. setting_default: 30
+# .. setting_description: Sets the number of days after which the gradebook will freeze following the course's end.
+GRADEBOOK_FREEZE_DAYS = 30
 
 # Used with XQueue
 XQUEUE_WAITTIME_BETWEEN_REQUESTS = 5  # seconds
@@ -1935,6 +1922,10 @@ STATICFILES_DIRS = [
     COMMON_ROOT / "static",
     PROJECT_ROOT / "static",
     NODE_MODULES_ROOT / "@edx",
+    # Temporarily adding the following static path as we are migrating the built-in blocks' Sass to vanilla CSS.
+    # Once all of the built-in blocks are extracted from edx-platform, we can remove this static path.
+    # Relevant ticket: https://github.com/openedx/edx-platform/issues/35300
+    XMODULE_ROOT / "static",
 ]
 
 FAVICON_PATH = 'images/favicon.ico'
@@ -2287,7 +2278,6 @@ MIDDLEWARE = [
     'openedx.core.djangoapps.safe_sessions.middleware.EmailChangeMiddleware',
 
     'common.djangoapps.student.middleware.UserStandingMiddleware',
-    'openedx.core.djangoapps.contentserver.middleware.StaticContentServerMiddleware',
 
     # Adds user tags to tracking events
     # Must go before TrackMiddleware, to get the context set up
@@ -3350,9 +3340,6 @@ INSTALLED_APPS = [
     # Management of external user ids
     'openedx.core.djangoapps.external_user_ids',
 
-    # Provides api for Demographics support
-    'openedx.core.djangoapps.demographics',
-
     # Management of per-user schedules
     'openedx.core.djangoapps.schedules',
 
@@ -3389,6 +3376,7 @@ INSTALLED_APPS = [
     'openedx_events',
 
     # Learning Core Apps, used by v2 content libraries (content_libraries app)
+    "openedx_learning.apps.authoring.collections",
     "openedx_learning.apps.authoring.components",
     "openedx_learning.apps.authoring.contents",
     "openedx_learning.apps.authoring.publishing",
@@ -3681,6 +3669,9 @@ if FEATURES.get('ENABLE_CORS_HEADERS'):
 # because that decision might happen in a later config file. (The headers to
 # allow is an application logic, and not site policy.)
 CORS_ALLOW_HEADERS = corsheaders_default_headers + (
+    'cache-control',
+    'expires',
+    'pragma',
     'use-jwt-cookie',
 )
 
@@ -3817,6 +3808,16 @@ ORA_WORKFLOW_UPDATE_ROUTING_KEY = "edx.lms.core.ora_workflow_update"
 
 # By default, don't use a file prefix
 ORA2_FILE_PREFIX = None
+
+# .. setting_name: ORA_PEER_LEASE_EXPIRATION_HOURS
+# .. setting_default: 8
+# .. setting_description: Amount of time before a lease on a peer submission expires
+ORA_PEER_LEASE_EXPIRATION_HOURS = 8
+
+# .. setting_name: ORA_STAFF_LEASE_EXPIRATION_HOURS
+# .. setting_default: 8
+# .. setting_description: Amount of time before a lease on a staff submission expires
+ORA_STAFF_LEASE_EXPIRATION_HOURS = 8
 
 # Default File Upload Storage bucket and prefix. Used by the FileUpload Service.
 FILE_UPLOAD_STORAGE_BUCKET_NAME = 'SET-ME-PLEASE (ex. bucket-name)'
@@ -4295,6 +4296,10 @@ SOCIAL_PLATFORMS = {
     }
 }
 
+# Enable First Purchase Discount offer override
+FIRST_PURCHASE_DISCOUNT_OVERRIDE_CODE = ''
+FIRST_PURCHASE_DISCOUNT_OVERRIDE_PERCENTAGE = 15
+
 # E-Commerce API Configuration
 ECOMMERCE_PUBLIC_URL_ROOT = 'http://localhost:8002'
 ECOMMERCE_API_URL = 'http://localhost:8002/api/v2'
@@ -4302,13 +4307,6 @@ ECOMMERCE_API_TIMEOUT = 5
 ECOMMERCE_ORDERS_API_CACHE_TIMEOUT = 3600
 ECOMMERCE_SERVICE_WORKER_USERNAME = 'ecommerce_worker'
 ECOMMERCE_API_SIGNING_KEY = 'SET-ME-PLEASE'
-
-# E-Commerce Commerce Coordinator Configuration
-COMMERCE_COORDINATOR_URL_ROOT = 'http://localhost:8140'
-COMMERCE_COORDINATOR_REFUND_PATH = '/lms/refund/'
-COMMERCE_COORDINATOR_REFUND_SOURCE_SYSTEMS = ('SET-ME-PLEASE',)
-COMMERCE_COORDINATOR_SERVICE_WORKER_USERNAME = 'commerce_coordinator_worker'
-COORDINATOR_CHECKOUT_REDIRECT_PATH = '/lms/payment_page_redirect/'
 
 # Exam Service
 EXAMS_SERVICE_URL = 'http://localhost:18740/api/v1'
@@ -4678,11 +4676,11 @@ ENTERPRISE_ALL_SERVICE_USERNAMES = [
     'enterprise_channel_worker',
     'enterprise_access_worker',
     'enterprise_subsidy_worker',
-    'subscriptions_worker'
 ]
 
 # Setting for Open API key and prompts used by edx-enterprise.
-OPENAI_API_KEY = ''
+CHAT_COMPLETION_API = 'https://example.com/chat/completion'
+CHAT_COMPLETION_API_KEY = 'i am a key'
 LEARNER_ENGAGEMENT_PROMPT_FOR_ACTIVE_CONTRACT = ''
 LEARNER_ENGAGEMENT_PROMPT_FOR_NON_ACTIVE_CONTRACT = ''
 LEARNER_PROGRESS_PROMPT_FOR_ACTIVE_CONTRACT = ''
@@ -4724,11 +4722,15 @@ ENTERPRISE_READONLY_ACCOUNT_FIELDS = [
 ENTERPRISE_CUSTOMER_COOKIE_NAME = 'enterprise_customer_uuid'
 BASE_COOKIE_DOMAIN = 'localhost'
 SYSTEM_TO_FEATURE_ROLE_MAPPING = {
+    ENTERPRISE_LEARNER_ROLE: [
+        DEFAULT_ENTERPRISE_ENROLLMENT_INTENTIONS_ROLE,
+    ],
     ENTERPRISE_ADMIN_ROLE: [
         ENTERPRISE_DASHBOARD_ADMIN_ROLE,
         ENTERPRISE_CATALOG_ADMIN_ROLE,
         ENTERPRISE_ENROLLMENT_API_ADMIN_ROLE,
         ENTERPRISE_REPORTING_CONFIG_ADMIN_ROLE,
+        DEFAULT_ENTERPRISE_ENROLLMENT_INTENTIONS_ROLE,
     ],
     ENTERPRISE_OPERATOR_ROLE: [
         ENTERPRISE_DASHBOARD_ADMIN_ROLE,
@@ -4737,6 +4739,11 @@ SYSTEM_TO_FEATURE_ROLE_MAPPING = {
         ENTERPRISE_REPORTING_CONFIG_ADMIN_ROLE,
         ENTERPRISE_FULFILLMENT_OPERATOR_ROLE,
         ENTERPRISE_SSO_ORCHESTRATOR_OPERATOR_ROLE,
+        DEFAULT_ENTERPRISE_ENROLLMENT_INTENTIONS_ROLE,
+    ],
+    SYSTEM_ENTERPRISE_PROVISIONING_ADMIN_ROLE: [
+        PROVISIONING_ENTERPRISE_CUSTOMER_ADMIN_ROLE,
+        PROVISIONING_PENDING_ENTERPRISE_CUSTOMER_ADMIN_ROLE,
     ],
 }
 
@@ -5353,12 +5360,6 @@ COOL_OFF_DAYS = 14
 ############ Settings for externally hosted executive education courses ############
 EXEC_ED_LANDING_PAGE = "https://www.getsmarter.com/account"
 
-############## PLOTLY ##############
-
-ENTERPRISE_PLOTLY_SECRET = "I am a secret"
-
-############## PLOTLY ##############
-
 ############ Internal Enterprise Settings ############
 ENTERPRISE_VSF_UUID = "e815503343644ac7845bc82325c34460"
 ############ Internal Enterprise Settings ############
@@ -5367,24 +5368,21 @@ ENTERPRISE_MANUAL_REPORTING_CUSTOMER_UUIDS = []
 
 AVAILABLE_DISCUSSION_TOURS = []
 
-######################## Subscriptions API SETTINGS ########################
-SUBSCRIPTIONS_ROOT_URL = ""
-SUBSCRIPTIONS_API_PATH = f"{SUBSCRIPTIONS_ROOT_URL}/api/v1/stripe-subscription/"
-
-SUBSCRIPTIONS_LEARNER_HELP_CENTER_URL = None
-SUBSCRIPTIONS_BUY_SUBSCRIPTION_URL = f"{SUBSCRIPTIONS_ROOT_URL}/api/v1/stripe-subscribe/"
-SUBSCRIPTIONS_MANAGE_SUBSCRIPTION_URL = None
-SUBSCRIPTIONS_MINIMUM_PRICE = '$39'
-SUBSCRIPTIONS_TRIAL_LENGTH = 7
-SUBSCRIPTIONS_SERVICE_WORKER_USERNAME = 'subscriptions_worker'
-
 ############## NOTIFICATIONS ##############
 NOTIFICATIONS_EXPIRY = 60
 EXPIRED_NOTIFICATIONS_DELETE_BATCH_SIZE = 10000
-NOTIFICATION_CREATION_BATCH_SIZE = 83
+NOTIFICATION_CREATION_BATCH_SIZE = 76
 NOTIFICATIONS_DEFAULT_FROM_EMAIL = "no-reply@example.com"
 NOTIFICATION_TYPE_ICONS = {}
 DEFAULT_NOTIFICATION_ICON_URL = ""
+
+############## NUDGE EMAILS ###############
+# .. setting_name: DISABLED_ORGS_FOR_PROGRAM_NUDGE
+# .. setting_default: []
+# .. setting_description: List of organization codes that should be disabled
+# .. for program nudge emails.
+# .. eg ['BTDx', 'MYTx']
+DISABLED_ORGS_FOR_PROGRAM_NUDGE = []
 
 ############################ AI_TRANSLATIONS ##################################
 AI_TRANSLATIONS_API_URL = 'http://localhost:18760/api/v1'
@@ -5459,6 +5457,10 @@ EVENT_BUS_PRODUCER_CONFIG = {
     'org.openedx.learning.user.course_access_role.removed.v1': {
         'learning-course-access-role-lifecycle':
             {'event_key_field': 'course_access_role_data.course_key', 'enabled': False},
+    },
+    'org.openedx.enterprise.learner_credit_course_enrollment.revoked.v1': {
+        'learner-credit-course-enrollment-lifecycle':
+            {'event_key_field': 'learner_credit_course_enrollment.uuid', 'enabled': False},
     },
     # CMS events. These have to be copied over here because cms.common adds some derived entries as well,
     # and the derivation fails if the keys are missing. If we ever fully decouple the lms and cms settings,
@@ -5535,3 +5537,102 @@ SURVEY_REPORT_CHECK_THRESHOLD = 6
 # .. setting_default: empty dictionary
 # .. setting_description: Dictionary with additional information that you want to share in the report.
 SURVEY_REPORT_EXTRA_DATA = {}
+
+
+# .. setting_name: DISABLED_COUNTRIES
+# .. setting_default: []
+# .. setting_description: List of country codes that should be disabled
+# .. for now it wil impact country listing in auth flow and user profile.
+# .. eg ['US', 'CA']
+DISABLED_COUNTRIES = []
+
+
+LMS_COMM_DEFAULT_FROM_EMAIL = "no-reply@example.com"
+
+
+####################### Setting for built-in Blocks Extraction #######################
+# The following Django settings flags have been introduced temporarily to facilitate
+# the rollout of the extracted built-in Blocks. Flags will use to toggle between
+# the old and new block quickly without putting course content or user state at risk.
+#
+# Ticket: https://github.com/openedx/edx-platform/issues/35308
+
+# .. toggle_name: USE_EXTRACTED_WORD_CLOUD_BLOCK
+# .. toggle_default: False
+# .. toggle_implementation: DjangoSetting
+# .. toggle_description: Enables the use of the extracted Word Cloud XBlock, which has been shifted to the 'openedx/xblocks-contrib' repo.
+# .. toggle_use_cases: temporary
+# .. toggle_warning: Not production-ready until https://github.com/openedx/edx-platform/issues/34840 is done.
+# .. toggle_creation_date: 2024-11-10
+# .. toggle_target_removal_date: 2025-06-01
+USE_EXTRACTED_WORD_CLOUD_BLOCK = False
+
+# .. toggle_name: USE_EXTRACTED_ANNOTATABLE_BLOCK
+# .. toggle_default: False
+# .. toggle_implementation: DjangoSetting
+# .. toggle_description: Enables the use of the extracted annotatable XBlock, which has been shifted to the 'openedx/xblocks-contrib' repo.
+# .. toggle_use_cases: temporary
+# .. toggle_warning: Not production-ready until https://github.com/openedx/edx-platform/issues/34841 is done.
+# .. toggle_creation_date: 2024-11-10
+# .. toggle_target_removal_date: 2025-06-01
+USE_EXTRACTED_ANNOTATABLE_BLOCK = False
+
+# .. toggle_name: USE_EXTRACTED_POLL_QUESTION_BLOCK
+# .. toggle_default: False
+# .. toggle_implementation: DjangoSetting
+# .. toggle_description: Enables the use of the extracted poll question XBlock, which has been shifted to the 'openedx/xblocks-contrib' repo.
+# .. toggle_use_cases: temporary
+# .. toggle_warning: Not production-ready until https://github.com/openedx/edx-platform/issues/34839 is done.
+# .. toggle_creation_date: 2024-11-10
+# .. toggle_target_removal_date: 2025-06-01
+USE_EXTRACTED_POLL_QUESTION_BLOCK = False
+
+# .. toggle_name: USE_EXTRACTED_LTI_BLOCK
+# .. toggle_default: False
+# .. toggle_implementation: DjangoSetting
+# .. toggle_description: Enables the use of the extracted LTI XBlock, which has been shifted to the 'openedx/xblocks-contrib' repo.
+# .. toggle_use_cases: temporary
+# .. toggle_warning: Not production-ready until relevant subtask https://github.com/openedx/edx-platform/issues/34827 is done.
+# .. toggle_creation_date: 2024-11-10
+# .. toggle_target_removal_date: 2025-06-01
+USE_EXTRACTED_LTI_BLOCK = False
+
+# .. toggle_name: USE_EXTRACTED_HTML_BLOCK
+# .. toggle_default: False
+# .. toggle_implementation: DjangoSetting
+# .. toggle_description: Enables the use of the extracted HTML XBlock, which has been shifted to the 'openedx/xblocks-contrib' repo.
+# .. toggle_use_cases: temporary
+# .. toggle_warning: Not production-ready until relevant subtask https://github.com/openedx/edx-platform/issues/34827 is done.
+# .. toggle_creation_date: 2024-11-10
+# .. toggle_target_removal_date: 2025-06-01
+USE_EXTRACTED_HTML_BLOCK = False
+
+# .. toggle_name: USE_EXTRACTED_DISCUSSION_BLOCK
+# .. toggle_default: False
+# .. toggle_implementation: DjangoSetting
+# .. toggle_description: Enables the use of the extracted Discussion XBlock, which has been shifted to the 'openedx/xblocks-contrib' repo.
+# .. toggle_use_cases: temporary
+# .. toggle_warning: Not production-ready until relevant subtask https://github.com/openedx/edx-platform/issues/34827 is done.
+# .. toggle_creation_date: 2024-11-10
+# .. toggle_target_removal_date: 2025-06-01
+USE_EXTRACTED_DISCUSSION_BLOCK = False
+
+# .. toggle_name: USE_EXTRACTED_PROBLEM_BLOCK
+# .. toggle_default: False
+# .. toggle_implementation: DjangoSetting
+# .. toggle_description: Enables the use of the extracted Problem XBlock, which has been shifted to the 'openedx/xblocks-contrib' repo.
+# .. toggle_use_cases: temporary
+# .. toggle_warning: Not production-ready until relevant subtask https://github.com/openedx/edx-platform/issues/34827 is done.
+# .. toggle_creation_date: 2024-11-10
+# .. toggle_target_removal_date: 2025-06-01
+USE_EXTRACTED_PROBLEM_BLOCK = False
+
+# .. toggle_name: USE_EXTRACTED_VIDEO_BLOCK
+# .. toggle_default: False
+# .. toggle_implementation: DjangoSetting
+# .. toggle_description: Enables the use of the extracted Video XBlock, which has been shifted to the 'openedx/xblocks-contrib' repo.
+# .. toggle_use_cases: temporary
+# .. toggle_warning: Not production-ready until relevant subtask https://github.com/openedx/edx-platform/issues/34827 is done.
+# .. toggle_creation_date: 2024-11-10
+# .. toggle_target_removal_date: 2025-06-01
+USE_EXTRACTED_VIDEO_BLOCK = False

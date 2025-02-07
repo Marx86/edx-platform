@@ -18,7 +18,7 @@ import yaml
 from six import text_type
 
 from scripts.user_retirement.utils.edx_api import LmsApi  # pylint: disable=wrong-import-position
-from scripts.user_retirement.utils.edx_api import CredentialsApi, DemographicsApi, EcommerceApi, LicenseManagerApi
+from scripts.user_retirement.utils.edx_api import CredentialsApi, EcommerceApi, LicenseManagerApi
 from scripts.user_retirement.utils.thirdparty_apis.amplitude_api import \
     AmplitudeApi  # pylint: disable=wrong-import-position
 from scripts.user_retirement.utils.thirdparty_apis.braze_api import BrazeApi  # pylint: disable=wrong-import-position
@@ -43,12 +43,11 @@ def _fail(kind, code, message):
     """
     _log(kind, message)
 
-    # Try to get a traceback, if there is one. On Python 3.4 this raises an AttributeError
-    # if there is no current exception, so we eat that here.
-    try:
-        _log(kind, traceback.format_exc())
-    except AttributeError:
-        pass
+    # Log the traceback if an exception is currently being handled
+    exc_type, exc_value, exc_traceback = sys.exc_info()
+    if exc_type is not None:
+        traceback_str = traceback.format_exception(exc_type, exc_value, exc_traceback)
+        _log(kind, ''.join(traceback_str))
 
     sys.exit(code)
 
@@ -66,16 +65,12 @@ def _get_error_str_from_exception(exc):
     """
     Return a string from an exception that may or may not have a .content (Slumber)
     """
-    exc_msg = text_type(exc)
+    exc_msg = str(exc)
 
     if hasattr(exc, 'content'):
-        # Slumber inconveniently discards the decoded .text attribute from the Response object,
-        # and instead gives us the raw encoded .content attribute, so we need to decode it first.
-        # Python 2 needs the decode, Py3 does not have it.
-        try:
-            exc_msg += '\n' + str(exc.content).decode('utf-8')
-        except AttributeError:
-            exc_msg += '\n' + str(exc.content)
+        # Attempt to decode `exc.content` if it's in bytes, otherwise just convert to str
+        exc_content = exc.content.decode('utf-8') if isinstance(exc.content, bytes) else str(exc.content)
+        exc_msg += '\n' + exc_content
 
     return exc_msg
 
@@ -143,17 +138,16 @@ def _setup_lms_api_or_exit(fail_func, fail_code, config):
 
 def _setup_all_apis_or_exit(fail_func, fail_code, config):
     """
-    Performs setup of EdxRestClientApi instances for LMS, E-Commerce, Credentials, and
-    Demographics, as well as fetching the learner's record from LMS and validating that
-    it is in a state to work on. Returns the learner dict and their current stage in the
-    retirement flow.
+    Performs setup of EdxRestClientApi instances for LMS, E-Commerce, and Credentials,
+    as well as fetching the learner's record from LMS and validating that it is
+    in a state to work on. Returns the learner dict and their current stage in
+    the retirement flow.
     """
     try:
         lms_base_url = config['base_urls']['lms']
         ecommerce_base_url = config['base_urls'].get('ecommerce', None)
         credentials_base_url = config['base_urls'].get('credentials', None)
         segment_base_url = config['base_urls'].get('segment', None)
-        demographics_base_url = config['base_urls'].get('demographics', None)
         license_manager_base_url = config['base_urls'].get('license_manager', None)
         client_id = config['client_id']
         client_secret = config['client_secret']
@@ -181,7 +175,6 @@ def _setup_all_apis_or_exit(fail_func, fail_code, config):
                 ('CREDENTIALS', credentials_base_url),
                 ('SEGMENT', segment_base_url),
                 ('HUBSPOT', hubspot_api_key),
-                ('DEMOGRAPHICS', demographics_base_url)
             ):
                 if state[2] == service and service_url is None:
                     fail_func(fail_code, 'Service URL is not configured, but required for state {}'.format(state))
@@ -222,9 +215,6 @@ def _setup_all_apis_or_exit(fail_func, fail_code, config):
 
         if credentials_base_url:
             config['CREDENTIALS'] = CredentialsApi(lms_base_url, credentials_base_url, client_id, client_secret)
-
-        if demographics_base_url:
-            config['DEMOGRAPHICS'] = DemographicsApi(lms_base_url, demographics_base_url, client_id, client_secret)
 
         if license_manager_base_url:
             config['LICENSE_MANAGER'] = LicenseManagerApi(
